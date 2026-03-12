@@ -1,0 +1,21 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+*.xcuserstate
+
+# Cache
+.docc-lint-cache
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+*.swp
+*.swo
