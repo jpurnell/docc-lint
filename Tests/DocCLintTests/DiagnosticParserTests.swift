@@ -5,26 +5,6 @@ import Foundation
 @Suite("DiagnosticParser Tests")
 struct DiagnosticParserTests {
 
-    // Helper to create temporary test files
-    private func createTempCatalog(files: [String: String]) throws -> URL {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("docc-lint-test-\(UUID().uuidString)")
-            .appendingPathExtension("docc")
-
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
-        for (name, content) in files {
-            let fileURL = tempDir.appendingPathComponent(name)
-            try content.write(to: fileURL, atomically: true, encoding: .utf8)
-        }
-
-        return tempDir
-    }
-
-    private func cleanupCatalog(_ url: URL) {
-        try? FileManager.default.removeItem(at: url)
-    }
-
     // MARK: - JSON Parsing Tests
 
     @Suite("JSON Format Parsing")

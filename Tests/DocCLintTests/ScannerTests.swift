@@ -5,18 +5,6 @@ import Foundation
 @Suite("Scanner Tests")
 struct ScannerTests {
 
-    // Helper to create temporary directory structure
-    private func createTempDirectory() throws -> URL {
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("docc-lint-scanner-test-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        return tempDir
-    }
-
-    private func cleanup(_ url: URL) {
-        try? FileManager.default.removeItem(at: url)
-    }
-
     // MARK: - File Discovery Tests
 
     @Suite("DocC Catalog Discovery")

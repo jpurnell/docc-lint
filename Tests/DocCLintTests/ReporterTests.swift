@@ -5,50 +5,6 @@ import Foundation
 @Suite("Reporter Tests")
 struct ReporterTests {
 
-    // Helper to create a test report
-    private func createTestReport(
-        diagnostics: [MappedDiagnostic] = [],
-        filesScanned: Int = 10,
-        filesWithIssues: Int = 2
-    ) -> LintReport {
-        let totalErrors = diagnostics.filter { $0.severity == .error }.count
-        let totalWarnings = diagnostics.filter { $0.severity == .warning }.count
-        let totalNotes = diagnostics.filter { $0.severity == .note }.count
-
-        return LintReport(
-            version: "1.0.0",
-            timestamp: Date(timeIntervalSince1970: 1000000),
-            summary: LintReport.Summary(
-                filesScanned: filesScanned,
-                filesWithIssues: filesWithIssues,
-                totalErrors: totalErrors,
-                totalWarnings: totalWarnings,
-                totalNotes: totalNotes,
-                scanDuration: 2.5
-            ),
-            diagnostics: diagnostics
-        )
-    }
-
-    private func createTestDiagnostic(
-        file: String = "test.md",
-        line: Int = 10,
-        severity: DiagnosticSeverity = .warning,
-        message: String = "Test warning"
-    ) -> MappedDiagnostic {
-        MappedDiagnostic(
-            file: file,
-            line: line,
-            column: 1,
-            endColumn: 50,
-            severity: severity,
-            message: message,
-            content: "- ``Symbol`` with description",
-            ruleId: "task-group-links-only",
-            suggestedFix: SuggestedFix(description: "Remove description", replacement: "- ``Symbol``")
-        )
-    }
-
     // MARK: - JSON Reporter Tests
 
     @Suite("JSONReporter")
