@@ -1,11 +1,19 @@
 import Foundation
+import os
+
+/// Logger for symbol graph generation operations
+private let logger = Logger(subsystem: "com.docc-lint", category: "SymbolGraphGenerator")
 
 /// Generates symbol graphs for a SwiftPM project
 /// Symbol graphs are used by DocC to resolve symbol references
 public actor SymbolGraphGenerator {
+    /// Cached directory containing full symbol graph output.
     private var cachedSymbolGraphDir: URL?
+
+    /// Cached directory containing filtered symbol graph output.
     private var cachedFilteredDir: URL?
 
+    /// Creates a new symbol graph generator.
     public init() {}
 
     /// Generate symbol graphs for a SwiftPM project
@@ -21,16 +29,16 @@ public actor SymbolGraphGenerator {
     ) async throws -> URL? {
         // Return cached filtered result if available
         if let cached = cachedFilteredDir,
-           FileManager.default.fileExists(atPath: cached.path) {
+           (try? cached.checkResourceIsReachable()) ?? false { // silent: existence check
             if verbose {
-                print("Using cached filtered symbol graphs from: \(cached.path)")
+                logger.info("Using cached filtered symbol graphs from: \(cached.path, privacy: .public)")
             }
             return cached
         }
 
         // Return cached full result if already generated this session
         if let cached = cachedSymbolGraphDir,
-           FileManager.default.fileExists(atPath: cached.path) {
+           (try? cached.checkResourceIsReachable()) ?? false { // silent: existence check
             // Apply filtering if module names provided
             if let names = moduleNames, !names.isEmpty {
                 let filtered = try filterSymbolGraphs(from: cached, moduleNames: names, verbose: verbose)
@@ -38,16 +46,16 @@ public actor SymbolGraphGenerator {
                 return filtered
             }
             if verbose {
-                print("Using cached symbol graphs from: \(cached.path)")
+                logger.info("Using cached symbol graphs from: \(cached.path, privacy: .public)")
             }
             return cached
         }
 
         // Check if Package.swift exists
         let packageSwiftPath = projectRoot.appendingPathComponent("Package.swift")
-        guard FileManager.default.fileExists(atPath: packageSwiftPath.path) else {
+        guard (try? packageSwiftPath.checkResourceIsReachable()) ?? false else { // silent: existence check
             if verbose {
-                print("No Package.swift found at \(projectRoot.path)")
+                logger.info("No Package.swift found at \(projectRoot.path, privacy: .public)")
             }
             return nil
         }
@@ -60,7 +68,7 @@ public actor SymbolGraphGenerator {
         // Check if we already have symbol graphs (from previous runs)
         if hasExistingSymbolGraphs(at: symbolGraphDir) {
             if verbose {
-                print("Found existing symbol graphs at: \(symbolGraphDir.path)")
+                logger.info("Found existing symbol graphs at: \(symbolGraphDir.path, privacy: .public)")
             }
             cachedSymbolGraphDir = symbolGraphDir
 
@@ -76,12 +84,12 @@ public actor SymbolGraphGenerator {
         try FileManager.default.createDirectory(at: symbolGraphDir, withIntermediateDirectories: true)
 
         if verbose {
-            print("Generating symbol graphs for project at: \(projectRoot.path)")
-            print("This may take a while for large projects...")
+            logger.info("Generating symbol graphs for project at: \(projectRoot.path, privacy: .public)")
+            logger.info("This may take a while for large projects...")
         }
 
         // Run swift build with symbol graph emission for ALL targets
-        let process = Process()
+        let process: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         process.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
         process.arguments = [
             "build",
@@ -104,9 +112,9 @@ public actor SymbolGraphGenerator {
             let data = handle.availableData
             if !data.isEmpty {
                 Task { await outputCollector.append(data) }
-                // Print progress in verbose mode
+                // Log progress in verbose mode
                 if verbose, let str = String(data: data, encoding: .utf8) {
-                    print(str, terminator: "")
+                    logger.debug("\(str, privacy: .public)")
                 }
             }
         }
@@ -116,7 +124,7 @@ public actor SymbolGraphGenerator {
             if !data.isEmpty {
                 Task { await errorCollector.append(data) }
                 if verbose, let str = String(data: data, encoding: .utf8) {
-                    print(str, terminator: "")
+                    logger.debug("\(str, privacy: .public)")
                 }
             }
         }
@@ -133,25 +141,26 @@ public actor SymbolGraphGenerator {
             if verbose {
                 let errorOutput = await errorCollector.getData()
                 let errorString = String(data: errorOutput, encoding: .utf8) ?? ""
-                print("Swift build failed with exit code \(process.terminationStatus)")
-                print("Error output: \(errorString)")
+                logger.info("Swift build failed with exit code \(process.terminationStatus, privacy: .public)")
+                logger.info("Error output: \(errorString, privacy: .public)")
             }
             return nil
         }
 
         // Check if symbol graphs were generated
-        let contents = try? FileManager.default.contentsOfDirectory(at: symbolGraphDir, includingPropertiesForKeys: nil)
+        let contents = try? FileManager.default.contentsOfDirectory(at: symbolGraphDir, includingPropertiesForKeys: nil) // silent: error is expected and non-fatal
         let symbolGraphFiles = contents?.filter { $0.pathExtension == "json" } ?? []
 
         if symbolGraphFiles.isEmpty {
             if verbose {
-                print("Symbol graph generation produced no files")
+                logger.info("Symbol graph generation produced no files")
             }
             return nil
         }
 
         if verbose {
-            print("Generated \(symbolGraphFiles.count) symbol graph file(s)")
+            let count = symbolGraphFiles.count
+            logger.info("Generated \(count, privacy: .public) symbol graph file(s)")
         }
 
         // Cache the full result
@@ -197,16 +206,18 @@ public actor SymbolGraphGenerator {
                 try FileManager.default.copyItem(at: file, to: destFile)
                 copiedCount += 1
 
-                if let attrs = try? FileManager.default.attributesOfItem(atPath: file.path),
-                   let size = attrs[.size] as? Int64 {
-                    totalSize += size
+                if let vals = try? file.resourceValues(forKeys: [.fileSizeKey]), // silent: error is expected and non-fatal
+                   let size = vals.fileSize {
+                    totalSize += Int64(size)
                 }
             }
         }
 
         if verbose {
             let sizeMB = Double(totalSize) / 1_000_000.0
-            print("Filtered symbol graphs: \(copiedCount) files (\(String(format: "%.1f", sizeMB))MB) from \(contents.count) total")
+            let formattedSize = sizeMB.formatted(.number.precision(.fractionLength(1)))
+            let totalCount = contents.count
+            logger.info("Filtered symbol graphs: \(copiedCount, privacy: .public) files (\(formattedSize, privacy: .public)MB) from \(totalCount, privacy: .public) total")
         }
 
         return filteredDir
@@ -214,30 +225,33 @@ public actor SymbolGraphGenerator {
 
     /// Check if symbol graphs already exist and are non-empty
     public nonisolated func hasExistingSymbolGraphs(at directory: URL) -> Bool {
-        guard FileManager.default.fileExists(atPath: directory.path) else {
+        guard (try? directory.checkResourceIsReachable()) ?? false else { // silent: existence check
             return false
         }
 
-        let contents = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        let contents = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) // silent: error is expected and non-fatal
         let symbolFiles = contents?.filter { $0.pathExtension == "json" } ?? []
 
         return !symbolFiles.isEmpty
     }
 
     /// Clear cached symbol graph directory
-    public func clearCache() {
+    public func clearCache() { // LIVE: public API
         cachedSymbolGraphDir = nil
     }
 }
 
 /// Actor for safely collecting data from async pipe handlers
 actor DataCollector {
+    /// Collected data buffer.
     private var data = Data()
 
+    /// Append new data to the buffer.
     func append(_ newData: Data) {
         data.append(newData)
     }
 
+    /// Return the accumulated data.
     func getData() -> Data {
         return data
     }

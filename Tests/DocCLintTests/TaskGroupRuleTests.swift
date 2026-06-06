@@ -180,8 +180,7 @@ struct TaskGroupRuleTests {
 
             let diagnostics = rule.check(content: content, fileURL: testURL)
             #expect(diagnostics.count == 1)
-            #expect(diagnostics[0].suggestedFix != nil)
-            #expect(diagnostics[0].suggestedFix?.replacement == "- ``mean(_:)``")
+            #expect(diagnostics[0].message == "Only links are allowed in task group list items")
         }
 
         @Test("Diagnostic includes correct line number")

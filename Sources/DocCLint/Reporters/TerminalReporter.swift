@@ -1,4 +1,8 @@
 import Foundation
+import os
+
+/// Logger for terminal reporter diagnostics
+private let reporterLogger = Logger(subsystem: "com.docc-lint", category: "TerminalReporter") // LIVE: logging infrastructure
 
 /// Reporter that outputs human-readable terminal output with optional ANSI colors
 public struct TerminalReporter: Reporter, Sendable {
@@ -6,12 +10,18 @@ public struct TerminalReporter: Reporter, Sendable {
     private let verbose: Bool
     private let quiet: Bool
 
+    /// Creates a new terminal reporter with the given display options
+    /// - Parameters:
+    ///   - useColor: Whether to use ANSI color codes in output
+    ///   - verbose: Whether to show verbose informational messages
+    ///   - quiet: Whether to suppress non-error output
     public init(useColor: Bool = true, verbose: Bool = false, quiet: Bool = false) {
         self.useColor = useColor
         self.verbose = verbose
         self.quiet = quiet
     }
 
+    /// Format a lint report as human-readable terminal output
     public func format(_ report: LintReport) throws -> String {
         var output = ""
 
@@ -60,7 +70,7 @@ public struct TerminalReporter: Reporter, Sendable {
         output += "\n"
 
         if verbose {
-            output += String(format: "Scan duration: %.2fs\n", summary.scanDuration)
+            output += "Scan duration: \(summary.scanDuration.formatted(.number.precision(.fractionLength(2))))s\n"
         }
 
         return output
@@ -77,7 +87,7 @@ public struct TerminalReporter: Reporter, Sendable {
         // Content snippet with highlighting
         if let content = diagnostic.content {
             output += "   │\n"
-            output += String(format: "%3d │ ", diagnostic.line)
+            output += "\(String(diagnostic.line).padding(toLength: 3, withPad: " ", startingAt: 0)) │ "
             output += content
             output += "\n"
 
@@ -130,18 +140,21 @@ public struct TerminalReporter: Reporter, Sendable {
         return output
     }
 
+    /// Output an informational message to stdout when verbose mode is enabled
     public func info(_ message: String) {
         guard verbose else { return }
-        print(styled("ℹ ", style: .blue) + message)
+        FileHandle.standardOutput.write(Data((styled("ℹ ", style: .blue) + message + "\n").utf8))
     }
 
+    /// Output a warning message to stdout unless quiet mode is enabled
     public func warning(_ message: String) {
         guard !quiet else { return }
-        print(styled("⚠ ", style: .yellow) + message)
+        FileHandle.standardOutput.write(Data((styled("⚠ ", style: .yellow) + message + "\n").utf8))
     }
 
+    /// Output an error message to stdout
     public func error(_ message: String) {
-        print(styled("✖ ", style: .red) + message)
+        FileHandle.standardOutput.write(Data((styled("✖ ", style: .red) + message + "\n").utf8))
     }
 
     // MARK: - ANSI Styling

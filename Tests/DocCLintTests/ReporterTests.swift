@@ -45,8 +45,8 @@ struct ReporterTests {
             let data = output.data(using: .utf8)!
             let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-            #expect(parsed != nil)
-            #expect(parsed?["version"] as? String == "1.0.0")
+            let report_parsed = try #require(parsed)
+            #expect(report_parsed["version"] as? String == "1.0.0")
         }
 
         @Test("Includes all diagnostics in JSON output")
@@ -223,9 +223,9 @@ struct ReporterTests {
             let data = output.data(using: .utf8)!
             let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
-            #expect(parsed != nil)
-            #expect(parsed?["version"] as? String == "2.1.0")
-            #expect(parsed?["$schema"] != nil)
+            let sarif_parsed = try #require(parsed)
+            #expect(sarif_parsed["version"] as? String == "2.1.0")
+            #expect(sarif_parsed["$schema"] as? String == "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json")
         }
 
         @Test("Includes tool information")

@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import os
 
 /// Main lint command for validating DocC documentation
 struct LintCommand: AsyncParsableCommand {
@@ -7,6 +8,9 @@ struct LintCommand: AsyncParsableCommand {
         commandName: "lint",
         abstract: "Validate DocC documentation and report issues with source locations."
     )
+
+    /// Logger for diagnostic and progress messages
+    private var logger: Logger { Logger(subsystem: "com.docc-lint", category: "LintCommand") }
 
     // MARK: - Arguments
 
@@ -81,6 +85,9 @@ struct LintCommand: AsyncParsableCommand {
     @Flag(name: [.short, .long], help: "Only output errors")
     var quiet: Bool = false
 
+    /// Initialize a new LintCommand
+    public init() {}
+
     // MARK: - Validation
 
     mutating func validate() throws {
@@ -110,8 +117,11 @@ struct LintCommand: AsyncParsableCommand {
         let reporter = createReporter(useColor: useColor)
 
         if verbose {
-            reporter.info("Scanning: \(projectPath)")
-            reporter.info("Mode: \(full ? "full (file-by-file)" : "syntax-only")")
+            let scanMsg = "Scanning: \(projectPath)"
+            reporter.info(scanMsg)
+            let modeDesc = full ? "full (file-by-file)" : "syntax-only"
+            let modeMsg = "Mode: " + modeDesc
+            reporter.info(modeMsg)
         }
 
         // Initialize components
@@ -127,9 +137,9 @@ struct LintCommand: AsyncParsableCommand {
         }
 
         // Load cache
-        if verbose { print("  [timing] Loading cache..."); timingStart = Date() }
+        if verbose { logger.info("  [timing] Loading cache..."); timingStart = Date() }
         try cache?.load()
-        if verbose { print("  [timing] Cache loaded in \(Date().timeIntervalSince(timingStart))s") }
+        if verbose { logger.info("  [timing] Cache loaded in \(Date().timeIntervalSince(timingStart), privacy: .public)s") }
 
         // SINGLE FILE MODE: Process just one file
         if let singleFilePath = singleFile {
@@ -144,7 +154,7 @@ struct LintCommand: AsyncParsableCommand {
         }
 
         // Discover files
-        if verbose { print("  [timing] Discovering files..."); timingStart = Date() }
+        if verbose { logger.info("  [timing] Discovering files..."); timingStart = Date() }
         let discoveredFiles = try await scanner.discoverFiles(
             at: URL(fileURLWithPath: projectPath),
             options: ScanOptions(
@@ -164,22 +174,27 @@ struct LintCommand: AsyncParsableCommand {
         }
 
         if verbose {
-            print("  [timing] File discovery took \(Date().timeIntervalSince(timingStart))s")
-            reporter.info("Found \(markdownFiles.count) documentation files to scan")
+            logger.info("  [timing] File discovery took \(Date().timeIntervalSince(timingStart), privacy: .public)s")
+            let foundMsg = "Found " + String(markdownFiles.count) + " documentation files to scan"
+            reporter.info(foundMsg)
         }
 
         // Quick check: are ALL files already cached?
-        if verbose { print("  [timing] Checking cache..."); timingStart = Date() }
-        let uncachedCount = cache != nil ? markdownFiles.filter { cache!.needsScan($0) }.count : markdownFiles.count
-        if verbose { print("  [timing] Cache check took \(Date().timeIntervalSince(timingStart))s") }
+        if verbose { logger.info("  [timing] Checking cache..."); timingStart = Date() }
+        let uncachedCount: Int
+        if let cache = cache {
+            uncachedCount = markdownFiles.filter { cache.needsScan($0) }.count
+        } else {
+            uncachedCount = markdownFiles.count
+        }
+        if verbose { logger.info("  [timing] Cache check took \(Date().timeIntervalSince(timingStart), privacy: .public)s") }
 
         if uncachedCount == 0 {
             if verbose {
-                reporter.info("All \(markdownFiles.count) files cached, skipping symbol graphs and processing")
+                let cacheMsg = "All " + String(markdownFiles.count) + " files cached, skipping symbol graphs and processing"
+                reporter.info(cacheMsg)
             }
             // Return empty results - everything is cached
-            let fileResults: [FileResult] = []
-            let allDiagnostics: [MappedDiagnostic] = []
             let scanDuration = Date().timeIntervalSince(startTime)
 
             let report = LintReport(
@@ -193,7 +208,7 @@ struct LintCommand: AsyncParsableCommand {
                     totalNotes: 0,
                     scanDuration: scanDuration
                 ),
-                diagnostics: allDiagnostics,
+                diagnostics: [],
                 fileResults: nil
             )
 
@@ -201,7 +216,7 @@ struct LintCommand: AsyncParsableCommand {
             if let outputFile = outputFile {
                 try output.write(toFile: outputFile, atomically: true, encoding: .utf8)
             } else {
-                print(output)
+                FileHandle.standardOutput.write(Data((output + "\n").utf8))
             }
             return  // Early exit - nothing to do
         }
@@ -241,7 +256,8 @@ struct LintCommand: AsyncParsableCommand {
         }
 
         if verbose {
-            reporter.info("Processing \(catalogURLs.count) catalog(s) using full catalog mode...")
+            let catMsg = "Processing " + String(catalogURLs.count) + " catalog(s) using full catalog mode..."
+            reporter.info(catMsg)
         }
 
         // Process each catalog using CatalogProcessor (full catalog mode = accurate warnings)
@@ -276,7 +292,7 @@ struct LintCommand: AsyncParsableCommand {
         }
 
         // Filter by severity
-        var allDiagnostics = allDiagnosticsFromCatalogs.filter { $0.severity >= minimumSeverity }
+        let allDiagnostics = allDiagnosticsFromCatalogs.filter { $0.severity >= minimumSeverity }
 
         let scanDuration = Date().timeIntervalSince(startTime)
 
@@ -304,10 +320,10 @@ struct LintCommand: AsyncParsableCommand {
         if let outputFile = outputFile {
             try output.write(toFile: outputFile, atomically: true, encoding: .utf8)
             if !quiet {
-                print("Results written to: \(outputFile)")
+                FileHandle.standardOutput.write(Data(("Results written to: \(outputFile)" + "\n").utf8))
             }
         } else {
-            print(output)
+            FileHandle.standardOutput.write(Data((output + "\n").utf8))
         }
 
         // GitHub Actions annotations
@@ -315,7 +331,7 @@ struct LintCommand: AsyncParsableCommand {
             for diagnostic in allDiagnostics {
                 let level = diagnostic.severity == .error ? "error" : "warning"
                 if let file = diagnostic.file {
-                    print("::\(level) file=\(file),line=\(diagnostic.line),col=\(diagnostic.column)::\(diagnostic.message)")
+                    FileHandle.standardOutput.write(Data(("::\(level) file=\(file),line=\(diagnostic.line),col=\(diagnostic.column)::\(diagnostic.message)" + "\n").utf8))
                 }
             }
         }
@@ -355,6 +371,7 @@ struct LintCommand: AsyncParsableCommand {
         return Array(moduleNames).sorted()
     }
 
+    /// Create the appropriate reporter based on the selected output format
     private func createReporter(useColor: Bool) -> any Reporter {
         switch format {
         case .terminal:
@@ -376,10 +393,10 @@ struct LintCommand: AsyncParsableCommand {
         reporter: any Reporter,
         startTime: Date
     ) async throws {
-        let fileURL = URL(fileURLWithPath: filePath)
+        let fileURL = URL(fileURLWithPath: filePath).standardized
 
         // Verify file exists and is a documentation file
-        guard FileManager.default.fileExists(atPath: filePath) else {
+        guard (try? fileURL.checkResourceIsReachable()) ?? false else { // silent: existence check
             throw ValidationError("File not found: \(filePath)")
         }
 
@@ -389,7 +406,8 @@ struct LintCommand: AsyncParsableCommand {
         }
 
         if verbose {
-            reporter.info("Processing single file: \(filePath)")
+            let fileMsg = "Processing single file: \(filePath)"
+            reporter.info(fileMsg)
         }
 
         // Check cache first
@@ -414,7 +432,7 @@ struct LintCommand: AsyncParsableCommand {
             )
 
             let output = try reporter.format(report)
-            print(output)
+            FileHandle.standardOutput.write(Data((output + "\n").utf8))
             return
         }
 
@@ -426,7 +444,8 @@ struct LintCommand: AsyncParsableCommand {
         // Extract module name from file path
         let moduleNames = extractModuleNames(from: [fileURL])
         if verbose && !moduleNames.isEmpty {
-            reporter.info("Filtering symbol graphs to modules: \(moduleNames.joined(separator: ", "))")
+            let modMsg = "Filtering symbol graphs to modules: " + moduleNames.joined(separator: ", ")
+            reporter.info(modMsg)
         }
 
         let generator = SymbolGraphGenerator()
@@ -472,10 +491,10 @@ struct LintCommand: AsyncParsableCommand {
         if let outputFile = outputFile {
             try output.write(toFile: outputFile, atomically: true, encoding: .utf8)
             if !quiet {
-                print("Results written to: \(outputFile)")
+                FileHandle.standardOutput.write(Data(("Results written to: \(outputFile)" + "\n").utf8))
             }
         } else {
-            print(output)
+            FileHandle.standardOutput.write(Data((output + "\n").utf8))
         }
 
         // GitHub Actions annotations
@@ -483,7 +502,7 @@ struct LintCommand: AsyncParsableCommand {
             for diagnostic in allDiagnostics {
                 let level = diagnostic.severity == .error ? "error" : "warning"
                 if let file = diagnostic.file {
-                    print("::\(level) file=\(file),line=\(diagnostic.line),col=\(diagnostic.column)::\(diagnostic.message)")
+                    FileHandle.standardOutput.write(Data(("::\(level) file=\(file),line=\(diagnostic.line),col=\(diagnostic.column)::\(diagnostic.message)" + "\n").utf8))
                 }
             }
         }
@@ -504,14 +523,20 @@ struct LintCommand: AsyncParsableCommand {
 
 // MARK: - Supporting Types
 
+/// Output format options for lint results
 enum OutputFormat: String, ExpressibleByArgument, CaseIterable {
+    /// Terminal-friendly formatted output with optional ANSI colors
     case terminal
+    /// Machine-readable JSON output
     case json
+    /// Comma-separated values output
     case csv
+    /// Static Analysis Results Interchange Format
     case sarif
 }
 
 extension DiagnosticSeverity: ExpressibleByArgument {
+    /// Initialize a DiagnosticSeverity from a command-line argument string
     public init?(argument: String) {
         self.init(rawValue: argument.lowercased())
     }

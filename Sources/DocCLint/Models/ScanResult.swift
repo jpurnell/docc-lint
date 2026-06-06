@@ -1,25 +1,26 @@
 import Foundation
 
-/// Result of scanning a single file or catalog
+/// Result of scanning a single file or catalog.
 public struct ScanResult: Codable, Sendable {
-    /// The path that was scanned
+    /// The path that was scanned.
     public let path: String
 
-    /// Type of the scanned item
+    /// Type of the scanned item.
     public let fileType: ScannedFileType
 
-    /// Diagnostics found during scanning
+    /// Diagnostics found during scanning.
     public let diagnostics: [MappedDiagnostic]
 
-    /// Whether the scan was successful
+    /// Whether the scan was successful.
     public let success: Bool
 
-    /// Error message if scan failed
+    /// Error message if scan failed.
     public let errorMessage: String?
 
-    /// Time taken to scan in seconds
+    /// Time taken to scan in seconds.
     public let scanDuration: Double
 
+    /// Creates a new scan result with the specified values.
     public init(
         path: String,
         fileType: ScannedFileType,
@@ -36,7 +37,7 @@ public struct ScanResult: Codable, Sendable {
         self.scanDuration = scanDuration
     }
 
-    /// Summary of diagnostics by severity
+    /// Summary of diagnostics by severity.
     public var summary: (errors: Int, warnings: Int, notes: Int) {
         var errors = 0, warnings = 0, notes = 0
         for diagnostic in diagnostics {
@@ -50,46 +51,54 @@ public struct ScanResult: Codable, Sendable {
     }
 }
 
-/// Classification of files that can be scanned
+/// Classification of files that can be scanned.
 public enum ScannedFileType: String, Codable, Sendable {
-    /// A .docc catalog bundle
+    /// A .docc catalog bundle.
     case doccCatalog
 
-    /// A markdown file inside a .docc catalog
+    /// A markdown file inside a .docc catalog.
     case markdownInCatalog
 
-    /// A standalone markdown file outside any catalog
-    case standaloneMarkdown
+    /// A standalone markdown file outside any catalog.
+    case standaloneMarkdown // LIVE: public API
 
-    /// A Swift source file with documentation comments
-    case swiftSource
+    /// A Swift source file with documentation comments.
+    case swiftSource // LIVE: public API
 }
 
-/// Aggregated results from scanning multiple files
+/// Aggregated results from scanning multiple files.
 public struct LintReport: Codable, Sendable {
-    /// Tool version
+    /// Tool version.
     public let version: String
 
-    /// When the scan was performed
+    /// When the scan was performed.
     public let timestamp: Date
 
-    /// Summary statistics
+    /// Summary statistics.
     public let summary: Summary
 
-    /// All diagnostics found
+    /// All diagnostics found.
     public let diagnostics: [MappedDiagnostic]
 
-    /// Individual file results (optional, for detailed reports)
+    /// Individual file results (optional, for detailed reports).
     public let fileResults: [ScanResult]?
 
+    /// Summary statistics for a lint report.
     public struct Summary: Codable, Sendable {
+        /// The number of files scanned.
         public let filesScanned: Int
+        /// The number of files with issues.
         public let filesWithIssues: Int
+        /// The total number of errors.
         public let totalErrors: Int
+        /// The total number of warnings.
         public let totalWarnings: Int
+        /// The total number of notes.
         public let totalNotes: Int
+        /// The total scan duration in seconds.
         public let scanDuration: Double
 
+        /// Creates a new summary with the specified statistics.
         public init(
             filesScanned: Int,
             filesWithIssues: Int,
@@ -107,6 +116,7 @@ public struct LintReport: Codable, Sendable {
         }
     }
 
+    /// Creates a new lint report with the specified values.
     public init(
         version: String,
         timestamp: Date,

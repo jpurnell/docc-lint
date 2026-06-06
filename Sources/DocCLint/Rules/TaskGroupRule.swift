@@ -3,8 +3,10 @@ import Foundation
 /// Rule that checks for task group list items containing more than just symbol links
 /// DocC requires task group list items to contain ONLY a symbol link like `- ``Symbol```
 public struct TaskGroupRule {
+    /// Unique identifier for this lint rule
     public static let ruleId = "task-group-links-only"
 
+    /// Creates a new task group rule instance
     public init() {}
 
     /// Check a single markdown file for task group violations
@@ -12,7 +14,7 @@ public struct TaskGroupRule {
     ///   - content: The markdown file content
     ///   - fileURL: The URL of the file being checked
     /// - Returns: Array of diagnostics for any violations found
-    public func check(content: String, fileURL: URL) -> [MappedDiagnostic] {
+    public func check(content: String, fileURL: URL) -> [MappedDiagnostic] { // LIVE: public API
         var diagnostics: [MappedDiagnostic] = []
         let lines = content.components(separatedBy: .newlines)
 

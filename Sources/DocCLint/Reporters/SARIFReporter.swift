@@ -3,8 +3,10 @@ import Foundation
 /// Reporter that outputs SARIF format for GitHub Code Scanning integration
 public struct SARIFReporter: Reporter, Sendable {
 
+    /// Creates a new SARIF reporter
     public init() {}
 
+    /// Format a lint report as SARIF JSON for code scanning integration
     public func format(_ report: LintReport) throws -> String {
         let sarif = SARIFOutput(
             version: "2.1.0",

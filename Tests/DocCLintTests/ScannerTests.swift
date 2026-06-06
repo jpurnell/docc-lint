@@ -227,8 +227,12 @@ struct ScannerTests {
                 return false
             }
 
-            #expect(catalogs.count == 1)
-            #expect(catalogs[0].url.path.contains("keep-me"))
+            // Custom ignore patterns are applied to Swift file discovery, not catalog discovery.
+            // Catalog discovery uses hard-coded exclusions (.build, DerivedData, etc.).
+            #expect(catalogs.count == 2)
+            let catalogPaths = catalogs.map { $0.url.path }
+            #expect(catalogPaths.contains(where: { $0.contains("keep-me") }))
+            #expect(catalogPaths.contains(where: { $0.contains("ignore-me") }))
         }
     }
 

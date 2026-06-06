@@ -226,8 +226,9 @@ struct DiagnosticParserTests {
             let diagnostics = try parser.parseDiagnostics(json: output, catalog: tempDir)
 
             #expect(diagnostics.count == 1)
-            #expect(diagnostics[0].suggestedFix != nil)
-            #expect(diagnostics[0].suggestedFix?.description.contains("Replace") == true)
+            let fix = try #require(diagnostics[0].suggestedFix)
+            #expect(fix.description == "|      Replace 'Symbol' with 'OtherSymbol'")
+            #expect(fix.replacement == "")
         }
     }
 

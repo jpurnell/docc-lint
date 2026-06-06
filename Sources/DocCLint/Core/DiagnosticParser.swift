@@ -1,8 +1,13 @@
 import Foundation
+import os
+
+/// Logger for diagnostic parsing operations
+private let logger = Logger(subsystem: "com.docc-lint", category: "DiagnosticParser") // LIVE: logging infrastructure
 
 /// Parses DocC diagnostics JSON and maps to source files
 public struct DiagnosticParser {
 
+    /// Creates a new diagnostic parser.
     public init() {}
 
     /// Parse diagnostics JSON and map to source files
@@ -34,7 +39,7 @@ public struct DiagnosticParser {
     }
 
     /// Parse diagnostics from Xcode's DerivedData diagnostics file
-    public func parseDiagnosticsFile(at path: String, catalog: URL) throws -> [MappedDiagnostic] {
+    public func parseDiagnosticsFile(at path: String, catalog: URL) throws -> [MappedDiagnostic] { // LIVE: public API
         let json = try String(contentsOfFile: path, encoding: .utf8)
         return try parseDiagnostics(json: json, catalog: catalog)
     }
@@ -51,7 +56,7 @@ public struct DiagnosticParser {
 
         while let url = enumerator?.nextObject() as? URL {
             if url.pathExtension == "md" {
-                let content = try? String(contentsOf: url, encoding: .utf8)
+                let content = try? String(contentsOf: url, encoding: .utf8) // silent: error is expected and non-fatal
                 let lines = content?.components(separatedBy: .newlines) ?? []
 
                 files.append(CatalogFile(
@@ -99,8 +104,8 @@ public struct DiagnosticParser {
             // Find the matching catalog file if we have a path
             if let path = filePath {
                 matchedFile = catalogFiles.first { $0.url.path == path }
-                if matchedFile != nil && line > 0 && line <= matchedFile!.lines.count {
-                    content = matchedFile!.lines[line - 1]
+                if let file = matchedFile, line > 0, line <= file.lines.count {
+                    content = file.lines[line - 1]
                 }
                 matchedLine = line
             }
@@ -193,7 +198,6 @@ public struct DiagnosticParser {
 
         var currentSeverity: DiagnosticSeverity?
         var currentMessage: String?
-        var suggestion: String?
 
         for (index, line) in lines.enumerated() {
             // Check for severity line
@@ -234,7 +238,8 @@ public struct DiagnosticParser {
                     var content: String? = nil
                     if let filePath = parsed.file, parsed.line > 0 {
                         let fullPath = filePath.hasPrefix("/") ? filePath : "\(catalog.path)/\(filePath)"
-                        if let fileContent = try? String(contentsOfFile: fullPath, encoding: .utf8) {
+                        let safePath = URL(fileURLWithPath: fullPath).standardized
+                        if let fileContent = try? String(contentsOfFile: safePath.path, encoding: .utf8) { // silent: error is expected and non-fatal
                             let fileLines = fileContent.components(separatedBy: .newlines)
                             if parsed.line <= fileLines.count {
                                 content = fileLines[parsed.line - 1]

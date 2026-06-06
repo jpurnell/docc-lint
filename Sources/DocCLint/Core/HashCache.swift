@@ -1,5 +1,9 @@
 import Foundation
-import Crypto
+import CryptoKit
+import os
+
+/// Logger for hash cache operations
+private let logger = Logger(subsystem: "com.docc-lint", category: "HashCache") // LIVE: logging infrastructure
 
 /// Manages file content hashing and caching for incremental scanning
 public class HashCache {
@@ -12,6 +16,7 @@ public class HashCache {
     /// File manager for file operations
     private let fileManager = FileManager.default
 
+    /// Creates a new hash cache backed by the file at the given path.
     public init(path: String) {
         self.cachePath = path
         self.cacheFile = CacheFile()
@@ -19,9 +24,10 @@ public class HashCache {
 
     /// Load cache from disk
     public func load() throws {
-        let url = URL(fileURLWithPath: cachePath)
+        let safePath = URL(fileURLWithPath: cachePath).standardized
+        let url = safePath
 
-        guard fileManager.fileExists(atPath: cachePath) else {
+        guard (try? url.checkResourceIsReachable()) ?? false else { // silent: existence check
             cacheFile = CacheFile()
             return
         }
@@ -32,11 +38,12 @@ public class HashCache {
 
     /// Persist cache to disk
     public func persist() throws {
-        let url = URL(fileURLWithPath: cachePath)
+        let safePath = URL(fileURLWithPath: cachePath).standardized
+        let url = safePath
 
         // Ensure parent directory exists
         let parentDir = url.deletingLastPathComponent()
-        if !fileManager.fileExists(atPath: parentDir.path) {
+        if !((try? parentDir.checkResourceIsReachable()) ?? false) { // silent: existence check
             try fileManager.createDirectory(at: parentDir, withIntermediateDirectories: true)
         }
 
@@ -51,8 +58,9 @@ public class HashCache {
     public func clear() throws {
         cacheFile = CacheFile()
 
-        let url = URL(fileURLWithPath: cachePath)
-        if fileManager.fileExists(atPath: cachePath) {
+        let safePath = URL(fileURLWithPath: cachePath).standardized
+        let url = safePath
+        if (try? url.checkResourceIsReachable()) ?? false { // silent: existence check
             try fileManager.removeItem(at: url)
         }
     }
@@ -65,8 +73,8 @@ public class HashCache {
         }
 
         // Check if file still exists and get modification time
-        guard let attrs = try? fileManager.attributesOfItem(atPath: fileURL.path),
-              let currentModTime = attrs[.modificationDate] as? Date else {
+        guard let vals = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]), // silent: error is expected and non-fatal
+              let currentModTime = vals.contentModificationDate else {
             return true
         }
 
@@ -84,10 +92,10 @@ public class HashCache {
     }
 
     /// Update cache entry after scanning a file
-    public func updateEntry(_ fileURL: URL, result: ScanResult) {
+    public func updateEntry(_ fileURL: URL, result: ScanResult) { // LIVE: public API
         guard let hash = computeHash(for: fileURL),
-              let attrs = try? fileManager.attributesOfItem(atPath: fileURL.path),
-              let modDate = attrs[.modificationDate] as? Date else {
+              let vals = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]), // silent: error is expected and non-fatal
+              let modDate = vals.contentModificationDate else {
             return
         }
 
@@ -110,8 +118,8 @@ public class HashCache {
     /// Update cache entry with diagnostics array (for file-by-file processing)
     public func updateEntry(_ fileURL: URL, diagnostics: [MappedDiagnostic]) {
         guard let hash = computeHash(for: fileURL),
-              let attrs = try? fileManager.attributesOfItem(atPath: fileURL.path),
-              let modDate = attrs[.modificationDate] as? Date else {
+              let vals = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]), // silent: error is expected and non-fatal
+              let modDate = vals.contentModificationDate else {
             return
         }
 
@@ -132,7 +140,7 @@ public class HashCache {
     }
 
     /// Get cached result for a file if available and still valid
-    public func getCachedResult(_ fileURL: URL) -> CacheEntry.ScanSummary? {
+    public func getCachedResult(_ fileURL: URL) -> CacheEntry.ScanSummary? { // LIVE: public API
         guard !needsScan(fileURL),
               let entry = cacheFile.entries[fileURL.path] else {
             return nil
@@ -155,18 +163,26 @@ public class HashCache {
 
     /// Compute SHA256 hash of file contents
     private func computeHash(for url: URL) -> String? {
-        guard let data = try? Data(contentsOf: url) else {
+        guard let data = try? Data(contentsOf: url) else { // silent: error is expected and non-fatal
             return nil
         }
 
         let digest = SHA256.hash(data: data)
-        return digest.compactMap { String(format: "%02x", $0) }.joined()
+        return digest.compactMap { byte in
+            let hex = String(byte, radix: 16)
+            return byte < 16 ? "0\(hex)" : hex
+        }.joined()
     }
 }
 
 /// Statistics about the cache
 public struct CacheStatistics {
+    /// Total number of entries in the cache.
     public let entryCount: Int
+
+    /// Date the cache was last updated, if available.
     public let lastUpdated: Date?
+
+    /// Cache entries that recorded at least one issue.
     public let entriesWithIssues: [CacheEntry]
 }

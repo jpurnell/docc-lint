@@ -1,4 +1,8 @@
 import Foundation
+import os
+
+/// Logger for file scanning operations
+private let logger = Logger(subsystem: "com.docc-lint", category: "Scanner") // LIVE: logging infrastructure
 
 /// Options for file discovery
 public struct ScanOptions: Sendable {
@@ -8,6 +12,7 @@ public struct ScanOptions: Sendable {
     /// Glob patterns to ignore
     public let ignorePatterns: [String]
 
+    /// Creates scan options with the given settings.
     public init(includeSwiftDocs: Bool = false, ignorePatterns: [String] = []) {
         self.includeSwiftDocs = includeSwiftDocs
         self.ignorePatterns = ignorePatterns
@@ -38,6 +43,7 @@ public struct DiscoveredFile: Sendable {
     /// Modification date
     public let modificationDate: Date
 
+    /// Creates a discovered file with the given metadata.
     public init(url: URL, type: FileType, size: Int64, modificationDate: Date) {
         self.url = url
         self.type = type
@@ -54,7 +60,7 @@ public struct DiscoveredFile: Sendable {
         case markdownInCatalog(catalogURL: URL)
 
         /// A standalone markdown file outside any catalog
-        case standaloneMarkdown
+        case standaloneMarkdown // LIVE: public API
 
         /// A Swift source file with doc comments
         case swiftSource
@@ -63,8 +69,10 @@ public struct DiscoveredFile: Sendable {
 
 /// Discovers files for DocC validation
 public actor Scanner {
+    /// File manager used for file system queries.
     private let fileManager = FileManager.default
 
+    /// Creates a new scanner.
     public init() {}
 
     /// Discover all files to scan at the given root
@@ -80,24 +88,24 @@ public actor Scanner {
 
         for catalogURL in catalogs {
             // Add the catalog itself
-            if let attrs = try? fileManager.attributesOfItem(atPath: catalogURL.path) {
+            if let vals = try? catalogURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) { // silent: error is expected and non-fatal
                 results.append(DiscoveredFile(
                     url: catalogURL,
                     type: .doccCatalog(catalogURL),
-                    size: (attrs[.size] as? Int64) ?? 0,
-                    modificationDate: (attrs[.modificationDate] as? Date) ?? Date()
+                    size: Int64(vals.fileSize ?? 0),
+                    modificationDate: vals.contentModificationDate ?? Date()
                 ))
             }
 
             // Find markdown files within the catalog
             let markdownFiles = try findMarkdownFiles(in: catalogURL)
             for mdURL in markdownFiles {
-                if let attrs = try? fileManager.attributesOfItem(atPath: mdURL.path) {
+                if let vals = try? mdURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) { // silent: error is expected and non-fatal
                     results.append(DiscoveredFile(
                         url: mdURL,
                         type: .markdownInCatalog(catalogURL: catalogURL),
-                        size: (attrs[.size] as? Int64) ?? 0,
-                        modificationDate: (attrs[.modificationDate] as? Date) ?? Date()
+                        size: Int64(vals.fileSize ?? 0),
+                        modificationDate: vals.contentModificationDate ?? Date()
                     ))
                 }
             }
@@ -107,13 +115,13 @@ public actor Scanner {
         if options.includeSwiftDocs {
             let swiftFiles = try findSwiftFiles(at: root, ignoring: ignorePatterns)
             for swiftURL in swiftFiles {
-                if let attrs = try? fileManager.attributesOfItem(atPath: swiftURL.path),
+                if let vals = try? swiftURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]), // silent: error is expected and non-fatal
                    await hasDocComments(swiftURL) {
                     results.append(DiscoveredFile(
                         url: swiftURL,
                         type: .swiftSource,
-                        size: (attrs[.size] as? Int64) ?? 0,
-                        modificationDate: (attrs[.modificationDate] as? Date) ?? Date()
+                        size: Int64(vals.fileSize ?? 0),
+                        modificationDate: vals.contentModificationDate ?? Date()
                     ))
                 }
             }
@@ -126,14 +134,14 @@ public actor Scanner {
     private func findDocCCatalogs(at root: URL, ignoring patterns: [String]) throws -> [URL] {
         // First, check if root itself is a .docc catalog
         if root.pathExtension == "docc" {
-            var isDir: ObjCBool = false
-            if fileManager.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue {
+            let resourceValues = try? root.resourceValues(forKeys: [.isDirectoryKey]) // silent: error is expected and non-fatal
+            if resourceValues?.isDirectory == true {
                 return [root]
             }
         }
 
         // Use find command for speed - exclude common build directories
-        let process = Process()
+        let process: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         process.executableURL = URL(fileURLWithPath: "/usr/bin/find")
         process.arguments = [
             root.path,
@@ -150,9 +158,10 @@ public actor Scanner {
         process.standardError = FileHandle.nullDevice
 
         try process.run()
-        process.waitUntilExit()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
         let output = String(data: data, encoding: .utf8) ?? ""
 
         return output
@@ -163,7 +172,7 @@ public actor Scanner {
 
     /// Find documentation files within a .docc catalog (.md and .tutorial) using fast shell command
     private func findMarkdownFiles(in catalog: URL) throws -> [URL] {
-        let process = Process()
+        let process: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         process.executableURL = URL(fileURLWithPath: "/usr/bin/find")
         process.arguments = [
             catalog.path,
@@ -176,9 +185,10 @@ public actor Scanner {
         process.standardError = FileHandle.nullDevice
 
         try process.run()
-        process.waitUntilExit()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
         let output = String(data: data, encoding: .utf8) ?? ""
 
         return output
@@ -214,7 +224,7 @@ public actor Scanner {
 
     /// Check if a Swift file contains documentation comments
     private func hasDocComments(_ url: URL) async -> Bool {
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { // silent: error is expected and non-fatal
             return false
         }
 

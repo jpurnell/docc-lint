@@ -1,13 +1,21 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.docc-lint", category: "BatchAllProcessor")
 
 /// Processes ALL markdown files in a single docc convert call
 /// Optimized for large symbol graphs where loading cost dominates
 public actor BatchAllProcessor {
+    /// Whether verbose logging is enabled
     private let verbose: Bool
+    /// Optional directory containing symbol graph files
     private let symbolGraphDir: URL?
+    /// Optional hash-based file cache for skipping unchanged files
     private let cache: HashCache?
+    /// Cached path to the docc executable
     private var doccPath: String?
 
+    /// Creates a new batch processor.
     public init(verbose: Bool, symbolGraphDir: URL?, cache: HashCache?) {
         self.verbose = verbose
         self.symbolGraphDir = symbolGraphDir
@@ -15,7 +23,7 @@ public actor BatchAllProcessor {
     }
 
     /// Process all files in a single batch, then map diagnostics back
-    public func processFiles(_ files: [URL]) async throws -> [FileResult] {
+    public func processFiles(_ files: [URL]) async throws -> [FileResult] { // LIVE: public API
         // Find docc once
         doccPath = try await findDocC()
 
@@ -24,7 +32,8 @@ public actor BatchAllProcessor {
         if let cache = cache {
             filesToCheck = files.filter { cache.needsScan($0) }
             if verbose && filesToCheck.count < files.count {
-                print("  Skipping \(files.count - filesToCheck.count) cached files")
+                let skippedCount = files.count - filesToCheck.count
+                logger.info("  Skipping \(skippedCount, privacy: .public) cached files")
             }
         } else {
             filesToCheck = files
@@ -32,13 +41,14 @@ public actor BatchAllProcessor {
 
         if filesToCheck.isEmpty {
             if verbose {
-                print("  All files cached, nothing to check")
+                logger.info("  All files cached, nothing to check")
             }
             return []
         }
 
         if verbose {
-            print("  Checking \(filesToCheck.count) files in single batch (symbol graph loaded once)...")
+            let checkCount = filesToCheck.count
+            logger.info("  Checking \(checkCount, privacy: .public) files in single batch (symbol graph loaded once)...")
         }
 
         // Process ALL files in one batch
@@ -50,7 +60,8 @@ public actor BatchAllProcessor {
                 cache.updateEntry(file, diagnostics: [])
             }
             if verbose && !cleanFiles.isEmpty {
-                print("  ✓ Cached \(cleanFiles.count) clean files")
+                let cleanCount = cleanFiles.count
+                logger.info("  Cached \(cleanCount, privacy: .public) clean files")
             }
         }
 
@@ -70,11 +81,12 @@ public actor BatchAllProcessor {
 
         // Persist cache once at the end
         if let cache = cache {
-            try? cache.persist()
+            try? cache.persist() // silent: error is expected and non-fatal
         }
 
         if verbose {
-            print("  ⚠ Found \(results.count) files with issues")
+            let issueCount = results.count
+            logger.info("  Found \(issueCount, privacy: .public) files with issues")
         }
 
         return results
@@ -93,20 +105,22 @@ public actor BatchAllProcessor {
         try FileManager.default.createDirectory(at: tempCatalog, withIntermediateDirectories: true)
 
         defer {
-            try? FileManager.default.removeItem(at: tempBase)
+            try? FileManager.default.removeItem(at: tempBase) // silent: error is expected and non-fatal
         }
 
         // Copy all files to temp catalog with unique names
         var fileMapping: [String: URL] = [:] // temp filename -> original URL
         for (index, file) in files.enumerated() {
-            let destName = "\(index)_\(file.lastPathComponent)"
+            let safePath = file.standardized
+            let destName = "\(index)_\(safePath.lastPathComponent)"
             let destFile = tempCatalog.appendingPathComponent(destName)
-            try FileManager.default.copyItem(at: file, to: destFile)
+            try FileManager.default.copyItem(at: safePath, to: destFile)
             fileMapping[destName] = file
         }
 
         if verbose {
-            print("    → Running docc convert with \(files.count) files and symbol graph...")
+            let fileCount = files.count
+            logger.info("    Running docc convert with \(fileCount, privacy: .public) files and symbol graph...")
         }
 
         // Run docc convert (no output path = diagnostics only)
@@ -153,30 +167,31 @@ public actor BatchAllProcessor {
         return (diagnosticsByFile, cleanFiles)
     }
 
+    /// Locate the docc executable on this system.
     private func findDocC() async throws -> String {
         #if os(Linux)
-        let process = Process()
+        let process: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
         process.arguments = ["docc"]
         let pipe = Pipe()
         process.standardOutput = pipe
         try process.run()
-        process.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
             return path
         }
         throw ProcessorError.doccNotFound
         #else
-        let process = Process()
+        let process: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         process.arguments = ["--find", "docc"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         try process.run()
-        process.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
             return path
         }
@@ -184,8 +199,9 @@ public actor BatchAllProcessor {
         #endif
     }
 
+    /// Run the docc tool and capture its stderr output.
     private func runDocC(path: String, arguments: [String], workingDirectory: URL) async throws -> String {
-        let process = Process()
+        let process: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments
         process.currentDirectoryURL = workingDirectory
@@ -205,20 +221,24 @@ public actor BatchAllProcessor {
         }
 
         try process.run()
-        process.waitUntilExit()
 
         errorPipe.fileHandleForReading.readabilityHandler = nil
 
         let remaining = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
         var errorData = await errorCollector.getData()
         errorData.append(remaining)
 
         return String(data: errorData, encoding: .utf8) ?? ""
     }
 
+    /// Errors that can occur during batch processing.
     public enum ProcessorError: Error, LocalizedError {
+        /// The docc executable could not be found on this system.
         case doccNotFound
 
+        /// A human-readable description of the error.
         public var errorDescription: String? {
             switch self {
             case .doccNotFound:

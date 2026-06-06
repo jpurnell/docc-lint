@@ -1,13 +1,21 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.docc-lint", category: "BinarySearchProcessor")
 
 /// Processes markdown files using a binary search approach
 /// Batches files into catalogs and only splits when warnings are found
 public actor BinarySearchProcessor {
+    /// Whether verbose logging is enabled
     private let verbose: Bool
+    /// Optional directory containing symbol graph files
     private let symbolGraphDir: URL?
+    /// Optional hash-based file cache for skipping unchanged files
     private let cache: HashCache?
+    /// Cached path to the docc executable
     private var doccPath: String?
 
+    /// Creates a new binary search processor.
     public init(verbose: Bool, symbolGraphDir: URL?, cache: HashCache?) {
         self.verbose = verbose
         self.symbolGraphDir = symbolGraphDir
@@ -15,7 +23,7 @@ public actor BinarySearchProcessor {
     }
 
     /// Process files using binary search to efficiently find problematic ones
-    public func processFiles(_ files: [URL]) async throws -> [FileResult] {
+    public func processFiles(_ files: [URL]) async throws -> [FileResult] { // LIVE: public API
         // Find docc once
         doccPath = try await findDocC()
 
@@ -24,7 +32,8 @@ public actor BinarySearchProcessor {
         if let cache = cache {
             filesToCheck = files.filter { cache.needsScan($0) }
             if verbose && filesToCheck.count < files.count {
-                print("  Skipping \(files.count - filesToCheck.count) cached files")
+                let skippedCount = files.count - filesToCheck.count
+                logger.info("  Skipping \(skippedCount, privacy: .public) cached files")
             }
         } else {
             filesToCheck = files
@@ -32,13 +41,14 @@ public actor BinarySearchProcessor {
 
         if filesToCheck.isEmpty {
             if verbose {
-                print("  All files cached, nothing to check")
+                logger.info("  All files cached, nothing to check")
             }
             return []
         }
 
         if verbose {
-            print("  Checking \(filesToCheck.count) files using binary search...")
+            let checkCount = filesToCheck.count
+            logger.info("  Checking \(checkCount, privacy: .public) files using binary search...")
         }
 
         // Run binary search (caching happens immediately during search)
@@ -60,7 +70,7 @@ public actor BinarySearchProcessor {
             // Cache immediately (whether clean or with issues)
             if let cache = cache {
                 cache.updateEntry(files[0], diagnostics: result.diagnostics)
-                try? cache.persist()
+                try? cache.persist() // silent: error is expected and non-fatal
             }
             if !result.diagnostics.isEmpty {
                 return [result]
@@ -71,7 +81,8 @@ public actor BinarySearchProcessor {
         // If batch is too large, split first without checking (more parallel)
         if files.count > maxBatchSize {
             if verbose {
-                print("    Splitting \(files.count) files into smaller batches...")
+                let fileCount = files.count
+                logger.info("    Splitting \(fileCount, privacy: .public) files into smaller batches...")
             }
             let mid = files.count / 2
             let leftHalf = Array(files[..<mid])
@@ -85,7 +96,8 @@ public actor BinarySearchProcessor {
 
         // Check the batch
         if verbose {
-            print("    → Checking batch of \(files.count) files...")
+            let batchCount = files.count
+            logger.info("    Checking batch of \(batchCount, privacy: .public) files...")
         }
         let batchResult = try await checkBatch(files)
 
@@ -95,16 +107,19 @@ public actor BinarySearchProcessor {
                 for file in files {
                     cache.updateEntry(file, diagnostics: [])
                 }
-                try? cache.persist()  // Persist once for the whole batch
+                try? cache.persist() // silent: error is expected and non-fatal
             }
             if verbose {
-                print("    ✓ \(files.count) files: clean (cached)")
+                let cleanCount = files.count
+                logger.info("    \(cleanCount, privacy: .public) files: clean (cached)")
             }
             return []
         }
 
         if verbose {
-            print("    ⚠ \(files.count) files: \(batchResult.count) issue(s) found, narrowing down...")
+            let batchCount = files.count
+            let issueCount = batchResult.count
+            logger.info("    \(batchCount, privacy: .public) files: \(issueCount, privacy: .public) issue(s) found, narrowing down...")
         }
 
         // Split and recurse
@@ -132,15 +147,16 @@ public actor BinarySearchProcessor {
         try FileManager.default.createDirectory(at: tempCatalog, withIntermediateDirectories: true)
 
         defer {
-            try? FileManager.default.removeItem(at: tempBase)
+            try? FileManager.default.removeItem(at: tempBase) // silent: error is expected and non-fatal
         }
 
         // Copy all files to temp catalog, preserving relative structure
         var fileMapping: [String: URL] = [:] // temp filename -> original URL
         for (index, file) in files.enumerated() {
-            let destName = "\(index)_\(file.lastPathComponent)"
+            let safePath = file.standardized
+            let destName = "\(index)_\(safePath.lastPathComponent)"
             let destFile = tempCatalog.appendingPathComponent(destName)
-            try FileManager.default.copyItem(at: file, to: destFile)
+            try FileManager.default.copyItem(at: safePath, to: destFile)
             fileMapping[destName] = file
         }
 
@@ -157,8 +173,8 @@ public actor BinarySearchProcessor {
         // Read and parse diagnostics file
         let parser = DiagnosticParser()
         let diagnostics: [MappedDiagnostic]
-        if FileManager.default.fileExists(atPath: diagnosticsFile.path),
-           let json = try? String(contentsOf: diagnosticsFile, encoding: .utf8) {
+        if (try? diagnosticsFile.checkResourceIsReachable()) ?? false,
+           let json = try? String(contentsOf: diagnosticsFile, encoding: .utf8) { // silent: error is expected and non-fatal
             diagnostics = try parser.parseDiagnostics(json: json, catalog: tempCatalog)
         } else {
             diagnostics = []
@@ -186,13 +202,14 @@ public actor BinarySearchProcessor {
         }
     }
 
-    /// Check a single file
+    /// Check a single file by creating a mini-catalog
     private func checkSingleFile(_ file: URL) async throws -> FileResult {
         guard let doccPath = doccPath else {
             throw ProcessorError.doccNotFound
         }
 
         let startTime = Date()
+        let safePath = file.standardized
 
         let tempBase = FileManager.default.temporaryDirectory
             .appendingPathComponent("docc-lint-\(UUID().uuidString)")
@@ -201,11 +218,11 @@ public actor BinarySearchProcessor {
         try FileManager.default.createDirectory(at: tempCatalog, withIntermediateDirectories: true)
 
         defer {
-            try? FileManager.default.removeItem(at: tempBase)
+            try? FileManager.default.removeItem(at: tempBase) // silent: error is expected and non-fatal
         }
 
-        let destFile = tempCatalog.appendingPathComponent(file.lastPathComponent)
-        try FileManager.default.copyItem(at: file, to: destFile)
+        let destFile = tempCatalog.appendingPathComponent(safePath.lastPathComponent)
+        try FileManager.default.copyItem(at: safePath, to: destFile)
 
         // Run docc convert with diagnostics file
         let diagnosticsFile = tempBase.appendingPathComponent("diagnostics.json")
@@ -220,8 +237,8 @@ public actor BinarySearchProcessor {
         // Read and parse diagnostics file
         let parser = DiagnosticParser()
         var diagnostics: [MappedDiagnostic]
-        if FileManager.default.fileExists(atPath: diagnosticsFile.path),
-           let json = try? String(contentsOf: diagnosticsFile, encoding: .utf8) {
+        if (try? diagnosticsFile.checkResourceIsReachable()) ?? false,
+           let json = try? String(contentsOf: diagnosticsFile, encoding: .utf8) { // silent: error is expected and non-fatal
             diagnostics = try parser.parseDiagnostics(json: json, catalog: tempCatalog)
         } else {
             diagnostics = []
@@ -243,12 +260,18 @@ public actor BinarySearchProcessor {
         }
 
         if verbose {
+            let fileName = file.lastPathComponent
             if diagnostics.isEmpty {
-                print("    ✓ \(file.lastPathComponent)")
+                logger.info("    \(fileName, privacy: .public)")
             } else {
-                print("    ⚠ \(file.lastPathComponent): \(diagnostics.count) issue(s)")
+                let issueCount = diagnostics.count
+                logger.info("    \(fileName, privacy: .public): \(issueCount, privacy: .public) issue(s)")
                 for diag in diagnostics {
-                    print("      Line \(diag.line):\(diag.column)-\(diag.endColumn): \(diag.message)")
+                    let line = diag.line
+                    let col = diag.column
+                    let endCol = diag.endColumn
+                    let msg = diag.message
+                    logger.debug("      Line \(line, privacy: .public):\(col, privacy: .public)-\(endCol, privacy: .public): \(msg, privacy: .public)")
                 }
             }
         }
@@ -260,30 +283,31 @@ public actor BinarySearchProcessor {
         )
     }
 
+    /// Locate the docc executable on this system.
     private func findDocC() async throws -> String {
         #if os(Linux)
-        let process = Process()
+        let process: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
         process.arguments = ["docc"]
         let pipe = Pipe()
         process.standardOutput = pipe
         try process.run()
-        process.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
             return path
         }
         throw ProcessorError.doccNotFound
         #else
-        let process = Process()
+        let process: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         process.arguments = ["--find", "docc"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         try process.run()
-        process.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
             return path
         }
@@ -291,8 +315,9 @@ public actor BinarySearchProcessor {
         #endif
     }
 
+    /// Run the docc tool with the given arguments.
     private func runDocC(path: String, arguments: [String], workingDirectory: URL) async throws -> String {
-        let process = Process()
+        let process: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments
         process.currentDirectoryURL = workingDirectory
@@ -307,9 +332,12 @@ public actor BinarySearchProcessor {
         return ""  // We use diagnostics file, not output
     }
 
+    /// Errors that can occur during binary search processing.
     public enum ProcessorError: Error, LocalizedError {
+        /// The docc executable could not be found on this system.
         case doccNotFound
 
+        /// A human-readable description of the error.
         public var errorDescription: String? {
             switch self {
             case .doccNotFound:

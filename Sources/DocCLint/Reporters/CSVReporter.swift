@@ -3,8 +3,10 @@ import Foundation
 /// Reporter that outputs CSV format for spreadsheet compatibility
 public struct CSVReporter: Reporter, Sendable {
 
+    /// Creates a new CSV reporter
     public init() {}
 
+    /// Format a lint report as CSV text with headers
     public func format(_ report: LintReport) throws -> String {
         var output = "file,line,column,end_column,severity,message,content,rule_id\n"
 

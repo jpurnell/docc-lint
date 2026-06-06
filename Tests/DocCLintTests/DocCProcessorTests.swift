@@ -205,8 +205,8 @@ struct DocCProcessorTests {
             let error1: LocalizedError = DocCProcessorError.doccNotFound
             let error2: LocalizedError = DocCProcessorError.processingFailed("test")
 
-            #expect(error1.errorDescription != nil)
-            #expect(error2.errorDescription != nil)
+            #expect(error1.errorDescription == "Could not find docc executable. Ensure Xcode command line tools are installed.")
+            #expect(error2.errorDescription == "DocC processing failed: test")
         }
     }
 
@@ -382,13 +382,12 @@ struct DocCProcessorTests {
             )
 
             // Should have symbol graphs for both modules in ONE directory
-            #expect(result != nil)
-            if let dir = result {
-                let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-                let symbolFiles = files.filter { $0.pathExtension == "json" }
-                // At minimum should have symbol graphs present
-                #expect(symbolFiles.count >= 1)
-            }
+            let dir = try #require(result)
+            #expect(dir.lastPathComponent == "symbol-graph")
+            let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            let symbolFiles = files.filter { $0.pathExtension == "json" }
+            // At minimum should have symbol graphs present
+            #expect(symbolFiles.count >= 1)
         }
 
         @Test("Pre-generated symbol graphs are reused if they exist")

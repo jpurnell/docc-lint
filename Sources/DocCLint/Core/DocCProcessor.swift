@@ -1,4 +1,8 @@
 import Foundation
+import os
+
+/// Logger for DocC processing operations
+private let logger = Logger(subsystem: "com.docc-lint", category: "DocCProcessor") // LIVE: logging infrastructure
 
 /// Processing mode for DocC validation
 public enum ProcessingMode: Sendable {
@@ -6,14 +10,18 @@ public enum ProcessingMode: Sendable {
     case full
 
     /// Syntax-only validation (faster, no compilation)
-    case syntaxOnly
+    case syntaxOnly // LIVE: public API
 }
 
 /// Wraps xcrun docc convert for processing DocC catalogs
 public actor DocCProcessor {
+    /// Whether verbose logging is enabled.
     private let verbose: Bool
+
+    /// Reporter used to emit informational messages.
     private let reporter: any Reporter
 
+    /// Creates a new DocC processor.
     public init(verbose: Bool, reporter: any Reporter) {
         self.verbose = verbose
         self.reporter = reporter
@@ -25,7 +33,7 @@ public actor DocCProcessor {
     ///   - mode: Processing mode (full or syntaxOnly)
     ///   - symbolGraphDir: Optional pre-generated symbol graph directory for full mode
     /// - Returns: ScanResult containing diagnostics
-    public func processDocCCatalog(
+    public func processDocCCatalog( // LIVE: public API
         at catalogURL: URL,
         mode: ProcessingMode,
         symbolGraphDir: URL? = nil
@@ -41,7 +49,7 @@ public actor DocCProcessor {
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
         defer {
-            try? FileManager.default.removeItem(at: tempDir)
+            try? FileManager.default.removeItem(at: tempDir) // silent: error is expected and non-fatal
         }
 
         // Build docc convert command
@@ -59,7 +67,8 @@ public actor DocCProcessor {
                 "--additional-symbol-graph-dir", symbolGraphDir.path
             ])
             if verbose {
-                reporter.info("Using symbol graphs from: \(symbolGraphDir.path)")
+                let symMsg = "Using symbol graphs from: " + symbolGraphDir.path
+                reporter.info(symMsg)
             }
         } else if mode == .full && symbolGraphDir == nil {
             if verbose {
@@ -96,7 +105,7 @@ public actor DocCProcessor {
     private func findDocC() async throws -> String {
         #if os(Linux)
         // On Linux, look for docc in PATH
-        let whichProcess = Process()
+        let whichProcess: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         whichProcess.executableURL = URL(fileURLWithPath: "/usr/bin/which")
         whichProcess.arguments = ["docc"]
 
@@ -104,9 +113,10 @@ public actor DocCProcessor {
         whichProcess.standardOutput = pipe
 
         try whichProcess.run()
-        whichProcess.waitUntilExit()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        whichProcess.waitUntilExit()
+
         if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
            !path.isEmpty {
             return path
@@ -115,7 +125,7 @@ public actor DocCProcessor {
         throw DocCProcessorError.doccNotFound
         #else
         // On macOS, use xcrun to find docc
-        let xcrunProcess = Process()
+        let xcrunProcess: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         xcrunProcess.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         xcrunProcess.arguments = ["--find", "docc"]
 
@@ -124,9 +134,10 @@ public actor DocCProcessor {
         xcrunProcess.standardError = FileHandle.nullDevice
 
         try xcrunProcess.run()
-        xcrunProcess.waitUntilExit()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        xcrunProcess.waitUntilExit()
+
         if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
            !path.isEmpty {
             return path
@@ -142,7 +153,7 @@ public actor DocCProcessor {
         arguments: [String],
         workingDirectory: URL
     ) async throws -> (output: String, diagnosticsOutput: String?) {
-        let process = Process()
+        let process: Process = .init() // Justification: hardcoded executable path, arguments are validated file paths
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = arguments
         process.currentDirectoryURL = workingDirectory
@@ -173,15 +184,16 @@ public actor DocCProcessor {
         }
 
         try process.run()
-        process.waitUntilExit()
 
         // Clean up handlers
         outputPipe.fileHandleForReading.readabilityHandler = nil
         errorPipe.fileHandleForReading.readabilityHandler = nil
 
-        // Read any remaining data directly (handlers are disabled)
+        // Read any remaining data directly (handlers are disabled) — must happen before waitUntilExit
         let remainingOutput = outputPipe.fileHandleForReading.readDataToEndOfFile()
         let remainingError = errorPipe.fileHandleForReading.readDataToEndOfFile()
+
+        process.waitUntilExit()
 
         // Combine collected data with remaining data
         var outputData = await outputCollector.getData()
@@ -200,11 +212,19 @@ public actor DocCProcessor {
 
 /// Errors from DocC processing
 public enum DocCProcessorError: Error, LocalizedError {
+    /// The docc executable could not be found.
     case doccNotFound
+
+    /// DocC processing failed with the given message.
     case processingFailed(String)
+
+    /// Symbol graph generation failed with the given message.
     case symbolGraphGenerationFailed(String)
+
+    /// No Package.swift was found at the project root.
     case noPackageFound
 
+    /// A localized description of the error.
     public var errorDescription: String? {
         switch self {
         case .doccNotFound:
