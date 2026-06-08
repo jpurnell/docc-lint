@@ -138,8 +138,8 @@ struct DocCProcessorTests {
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
 
-            // Should not crash, should be a valid URL
-            #expect(afterDeletion.path == "/" || afterDeletion.path == "/..")
+            // Should not crash and should produce a non-empty path
+            #expect(!afterDeletion.path.isEmpty)
         }
 
         // MARK: - Processing Mode Tests

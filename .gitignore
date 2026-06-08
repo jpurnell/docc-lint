@@ -19,3 +19,6 @@ DerivedData/
 .idea/
 *.swp
 *.swo
+
+# Development guidelines (cloned separately, not part of this repo)
+development-guidelines/
