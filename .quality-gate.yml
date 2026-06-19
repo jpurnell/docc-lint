@@ -1,34 +1,3 @@
-# doc-lint excluded: Swift 6.3 docc-plugin can't generate symbol graphs
-# for executable targets (lands in ExecutableModules/ not Products/).
-# No DocC catalog exists — nothing to lint. Re-enable when docc-plugin
-# supports executable targets or code is split into a library.
-enabledCheckers:
-  - build
-  - test
-  - safety
-  - doc-coverage
-  - unreachable
-  - recursion
-  - concurrency
-  - pointer-escape
-  - memory-builder
-  - accessibility
-  - status
-  - swift-version
-  - logging
-  - test-quality
-  - context
-  - dependency-audit
-  - submodule-audit
-  - release-readiness
-  - fp-safety
-  - stochastic-determinism
-  - memory-lifecycle
-  - process-safety
-  - complexity
-  - hig-auditor
-  - consistency
-
 consistency:
   corpusPath: /Users/jpurnell/Dropbox/Computer/Development/Swift/Tools/org-judgement-corpus
   projectID: docc-lint
